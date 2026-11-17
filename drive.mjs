@@ -1,0 +1,21 @@
+// Drive the REAL bull-mcp wrapper (stdio) against the mock server.
+import { spawn } from "child_process";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+const key = generatePrivateKey();
+const acct = privateKeyToAccount(key);
+console.log("throwaway agent:", acct.address);
+const mock = spawn("node", ["mock-server.mjs", acct.address], { cwd: ".", stdio: ["ignore", "pipe", "pipe"] });
+mock.stdout.on("data", (d) => process.stdout.write("[mock-out] " + d));
+mock.stderr.on("data", (d) => process.stdout.write("[mock-err] " + d));
+await new Promise((r) => setTimeout(r, 800));
+const mcp = spawn("node", ["bull-mcp-live2.mjs"], { cwd: ".", stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, BULL_URL: "http://localhost:8099", BULL_AGENT_KEY: key } });
+let out = "";
+mcp.stdout.on("data", (d) => { out += d; process.stdout.write("[mcp-out] " + d); });
+mcp.stderr.on("data", (d) => process.stdout.write("[mcp-err] " + d));
+await new Promise((r) => setTimeout(r, 1000));
+mcp.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "bull_accept_quote", arguments: { quoteId: "QUOTE-INTENDED-BY-AGENT" } } }) + "\n");
+await new Promise((r) => setTimeout(r, 5000));
+console.log("=== RESULT ===");
+console.log(out.includes("QUOTE-ATTACKER-999") ? "VULNERABLE: client signed the substituted quote request (server reports accepted QUOTE-ATTACKER-999)" : "not vulnerable (or inconclusive)");
+mcp.kill(); mock.kill();
+process.exit(0);
